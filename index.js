@@ -1,155 +1,111 @@
-require('dotenv').config();
-const TelegramBot = require('node-telegram-bot-api');
-const axios = require('axios');
-const express = require('express');
+import asyncio
+import sqlite3
+import logging
+import os
+import html
+import random
+from datetime import datetime, timedelta
+from aiogram import Bot, Dispatcher
+from aiogram.types import Message, ErrorEvent, ReactionTypeEmoji
+from aiogram.filters import Command
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from keep_alive import keep_alive
 
-// --- 24/7 KEEP-ALIVE SERVER ---
-const app = express();
-app.get('/', (req, res) => res.send('Irshaa Bot is running 24/7!'));
-app.listen(process.env.PORT || 3000, () => console.log('Web server is awake.'));
+BOT_TOKEN = "8488349023:AAEULckG-HusIfVKAghIcjveyJZqQtqs9Wk"
+OWNER_ID = int(os.environ.get("BOT_OWNER_ID", "6146191046"))
+STARS_PER_POST = int(os.environ.get("STARS_PER_POST", "1000")) 
+ADMIN_USERNAMES = ["disturbor"]
 
-// Array of all 20 tokens
-const tokens = [
-  process.env.LISTENER_BOT_TOKEN, process.env.TOKEN_2, process.env.TOKEN_3, process.env.TOKEN_4, process.env.TOKEN_5, 
-  process.env.TOKEN_6, process.env.TOKEN_7, process.env.TOKEN_8, process.env.TOKEN_9, process.env.TOKEN_10,
-  process.env.TOKEN_11, process.env.TOKEN_12, process.env.TOKEN_13, process.env.TOKEN_14, process.env.TOKEN_15,
-  process.env.TOKEN_16, process.env.TOKEN_17, process.env.TOKEN_18, process.env.TOKEN_19, process.env.TOKEN_20
-];
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+scheduler = AsyncIOScheduler()
 
-const listenerBot = new TelegramBot(tokens[0], { polling: true });
-const allowedEmojis = ['⚡', '💅🏻', '😭', '😁', '❤️‍🔥', '❤️', '❤️', '❤️️', '❤️', '❤️'];
+conn = sqlite3.connect("market_stats.db", check_same_thread=False)
+cursor = conn.cursor()
 
-// --- MULTIPLE GROUPS & STATE MANAGEMENT ---
-let activeGroups = new Set(); 
-let currentAction = null; 
-const adminUsername = 'disturbor';
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS spenders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        stars INTEGER,
+        timestamp DATETIME
+    )
+""")
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS live_messages (
+        chat_id INTEGER,
+        message_id INTEGER
+    )
+""")
+conn.commit()
 
-console.log("Irshaa Multi-Group listener is running...");
+class MakePost(StatesGroup):
+    waiting_for_paragraph = State()
 
-// Reaction Logic with 1-Minute Delay
-async function triggerReactions(chatId, messageId) {
-  // 1. First 10 Bots React
-  for (let i = 0; i < 10; i++) {
-    const token = tokens[i];
-    if (!token) continue;
+def is_admin(user):
+    if not user: return False
+    if user.id == OWNER_ID: return True
+    if user.username and user.username.lower() in ADMIN_USERNAMES: return True
+    return False
 
-    const randomEmoji = allowedEmojis[Math.floor(Math.random() * allowedEmojis.length)];
-    const url = `https://api.telegram.org/bot${token}/setMessageReaction`;
-
-    try {
-      await axios.post(url, { chat_id: chatId, message_id: messageId, reaction: [{ type: 'emoji', emoji: randomEmoji }] });
-      await new Promise(resolve => setTimeout(resolve, 1500)); 
-    } catch (error) {
-      console.error(`Bot ${i + 1} failed:`, error?.response?.data?.description || error.message);
+def apply_premium_emojis(text):
+    emoji_replacements = {
+        "🎉": "5461151367559141950",
+        "✅": "5850633746583129853",
+        "❗️": "5274099962655816924",
+        "🔥": "5397751602956239123",
+        "📢": "5197304993920616826",
+        "⚠️": "5420323339723881652"
     }
-  }
+    for standard_emoji, premium_id in emoji_replacements.items():
+        premium_html = f'<tg-emoji emoji-id="{premium_id}">{standard_emoji}</tg-emoji>'
+        text = text.replace(standard_emoji, premium_html)
+    return text
 
-  // 2. Wait exactly 1 minute (60,000 milliseconds)
-  console.log("First 10 done. Waiting 1 minute before next batch...");
-  await new Promise(resolve => setTimeout(resolve, 60000));
+def format_stars(amount):
+    if amount >= 1000:
+        if amount % 1000 == 0: return f"{amount // 1000}k"
+        return f"{amount / 1000:.1f}k"
+    return str(amount)
 
-  // 3. Last 10 Bots React 
-  for (let i = 10; i < 20; i++) {
-    const token = tokens[i];
-    if (!token) continue;
-
-    const randomEmoji = allowedEmojis[Math.floor(Math.random() * allowedEmojis.length)];
-    const url = `https://api.telegram.org/bot${token}/setMessageReaction`;
-
-    try {
-      await axios.post(url, { chat_id: chatId, message_id: messageId, reaction: [{ type: 'emoji', emoji: randomEmoji }] });
-      await new Promise(resolve => setTimeout(resolve, 1500)); 
-    } catch (error) {
-      console.error(`Bot ${i + 1} failed:`, error?.response?.data?.description || error.message);
-    }
-  }
-}
-
-listenerBot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const text = msg.text || '';
-  const senderUsername = msg.from?.username?.toLowerCase();
-  const chatType = msg.chat.type;
-
-  // --- 1. ADMIN COMMANDS IN PRIVATE CHAT ---
-  if (chatType === 'private' && senderUsername === adminUsername) {
+def generate_leaderboard_text():
+    cursor.execute("SELECT username, SUM(stars) as total FROM spenders GROUP BY LOWER(username) ORDER BY total DESC LIMIT 10")
+    all_time = cursor.fetchall()
     
-    if (text === '/start') {
-      currentAction = 'add';
-      return listenerBot.sendMessage(chatId, "Boss, send the username of the group (e.g., @mygroup) to ADD to the auto-react list.");
-    }
+    one_week_ago = datetime.now() - timedelta(days=7)
+    cursor.execute("SELECT username, SUM(stars) as total FROM spenders WHERE timestamp >= ? GROUP BY LOWER(username) ORDER BY total DESC LIMIT 1", (one_week_ago,))
+    this_week = cursor.fetchone()
 
-    if (text === '/cancel') {
-      currentAction = 'cancel';
-      return listenerBot.sendMessage(chatId, "Boss, send the username of the group you want to REMOVE from the auto-react list.");
-    }
+    msg = "❗️Top spenders ⚠️\n@Paidsrobot to check your rank.📢\n\nAll time:\n"
+    if not all_time:
+        msg += "Nobody yet!\n"
+    else:
+        for index, row in enumerate(all_time, start=1):
+            uname = html.escape(str(row[0]))
+            stars = format_stars(row[1])
+            emoji = ' <tg-emoji emoji-id="5008457489528652800">⭐️</tg-emoji>🔥' if index == 1 else ""
+            msg += f'{index}. @{uname} ({stars} Stars <tg-emoji emoji-id="5030538831225422917">⭐️</tg-emoji>){emoji}\n'
+        
+    msg += "\nThis week #1. "
+    if this_week:
+        msg += f"@{html.escape(str(this_week[0]))} ({format_stars(this_week[1])} Stars)\n\n"
+    else:
+        msg += "Nobody yet!\n\n"
+        
+    msg += "⚠️ Every week the #1 spender gets a free Advertisement in @Joiwi ✅ ⚠️"
+    return apply_premium_emojis(msg)
 
-    if (text === '/check') {
-      currentAction = null; 
-      if (activeGroups.size === 0) {
-        return listenerBot.sendMessage(chatId, "The bots are currently NOT active in any groups.");
-      }
-      const groupList = Array.from(activeGroups).map(g => `@${g}`).join('\n');
-      return listenerBot.sendMessage(chatId, `Currently active in these groups:\n${groupList}`);
-    }
-
-    if (text.toLowerCase() === '/react' || text.toLowerCase() === 'react') {
-      currentAction = 'react';
-      return listenerBot.sendMessage(chatId, "Send me the Telegram message link to react to.\n(Format: https://t.me/groupname/123)");
-    }
-
-    if (currentAction && !text.startsWith('/')) {
-      if (currentAction === 'add') {
-        const groupName = text.replace('@', '').toLowerCase();
-        activeGroups.add(groupName);
-        currentAction = null;
-        return listenerBot.sendMessage(chatId, `✅ Added! Bots will now auto-react in @${groupName}.`);
-      }
-
-      if (currentAction === 'cancel') {
-        const groupName = text.replace('@', '').toLowerCase();
-        if (activeGroups.has(groupName)) {
-          activeGroups.delete(groupName);
-          currentAction = null;
-          return listenerBot.sendMessage(chatId, `🛑 Canceled. Bots will no longer react in @${groupName}.`);
-        } else {
-          return listenerBot.sendMessage(chatId, `I couldn't find @${groupName} in the active list. Type /check to see active groups.`);
-        }
-      }
-
-      if (currentAction === 'react') {
-        currentAction = null;
-        const linkRegex = /t\.me\/(?:c\/)?([a-zA-Z0-9_]+)\/(\d+)/;
-        const match = text.match(linkRegex);
-
-        if (match) {
-          let targetChatId = match[1];
-          const targetMessageId = match[2];
-
-          if (/^\d+$/.test(targetChatId)) {
-            targetChatId = `-100${targetChatId}`; 
-          } else {
-            targetChatId = `@${targetChatId}`;
-          }
-
-          listenerBot.sendMessage(chatId, `Command accepted! Deploying staggered reactions...`);
-          triggerReactions(targetChatId, targetMessageId)
-            .then(() => listenerBot.sendMessage(chatId, "✅ All staggered reactions finished!"))
-            .catch(() => listenerBot.sendMessage(chatId, "⚠️ Finished, but check Render logs for any failures."));
-          return;
-        } else {
-          return listenerBot.sendMessage(chatId, "Invalid link format. Try again with /react.");
-        }
-      }
-    }
-  }
-
-  // --- 2. AUTO-REACTION LOGIC FOR ACTIVE GROUPS ---
-  if (chatType === 'group' || chatType === 'supergroup') {
-    const currentGroupUsername = msg.chat.username?.toLowerCase();
+async def update_live_messages():
+    cursor.execute("SELECT chat_id, message_id FROM live_messages")
+    messages = cursor.fetchall()
+    if not messages: return
+    new_text = generate_leaderboard_text()
     
-    if (currentGroupUsername && activeGroups.has(currentGroupUsername)) {
-      triggerReactions(chatId, msg.message_id);
-    }
-  }
-});
+    for chat_id, msg_id in messages:
+        try:
+            await bot.edit_message_text(chat
