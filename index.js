@@ -1,320 +1,172 @@
-import asyncio
-import sqlite3
-import logging
-import os
-import html
-import random
-import re
-from datetime import datetime, timedelta
-from aiogram import Bot, Dispatcher
-from aiogram.types import Message, ErrorEvent, ReactionTypeEmoji
-from aiogram.filters import Command
-from aiogram.exceptions import TelegramBadRequest
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from keep_alive import keep_alive
+require('dotenv').config();
+const TelegramBot = require('node-telegram-bot-api');
+const axios = require('axios');
+const express = require('express');
 
-BOT_TOKEN = "8488349023:AAEULckG-HusIfVKAghIcjveyJZqQtqs9Wk"
-OWNER_ID = int(os.environ.get("BOT_OWNER_ID", "6146191046"))
-STARS_PER_POST = int(os.environ.get("STARS_PER_POST", "1000")) 
-ADMIN_USERNAMES = ["disturbor"]
+// --- 24/7 KEEP-ALIVE SERVER ---
+const app = express();
+app.get('/', (req, res) => res.send('Irshaa Bot is running 24/7!'));
+app.listen(process.env.PORT || 3000, () => console.log('Web server is awake.'));
 
-logging.basicConfig(level=logging.INFO)
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-scheduler = AsyncIOScheduler()
+// Array of all 20 tokens
+const tokens = [
+  process.env.LISTENER_BOT_TOKEN, process.env.TOKEN_2, process.env.TOKEN_3, process.env.TOKEN_4, process.env.TOKEN_5, 
+  process.env.TOKEN_6, process.env.TOKEN_7, process.env.TOKEN_8, process.env.TOKEN_9, process.env.TOKEN_10,
+  process.env.TOKEN_11, process.env.TOKEN_12, process.env.TOKEN_13, process.env.TOKEN_14, process.env.TOKEN_15,
+  process.env.TOKEN_16, process.env.TOKEN_17, process.env.TOKEN_18, process.env.TOKEN_19, process.env.TOKEN_20
+];
 
-conn = sqlite3.connect("market_stats.db", check_same_thread=False)
-cursor = conn.cursor()
+const listenerBot = new TelegramBot(tokens[0], { polling: true });
+const allowedEmojis = ['⚡', '💅🏻', '😭', '😁', '❤️‍🔥', '❤️', '🖕🏻', '😢'];
 
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS spenders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        username TEXT,
-        stars INTEGER,
-        timestamp DATETIME
-    )
-""")
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS live_messages (
-        chat_id INTEGER,
-        message_id INTEGER
-    )
-""")
-conn.commit()
+// --- MULTIPLE GROUPS & STATE MANAGEMENT ---
+let activeGroups = new Set(); 
+let currentAction = null; 
+let pendingReactChatId = null;
+let pendingReactMessageId = null;
+const adminUsername = 'disturbor';
 
-class MakePost(StatesGroup):
-    waiting_for_paragraph = State()
+console.log("Irshaa Multi-Group listener is running...");
 
-class ReactPost(StatesGroup):
-    waiting_for_link = State()
-    waiting_for_emoji = State()
+// Reaction Logic with Custom Emoji Support & 1-Minute Delay
+async function triggerReactions(chatId, messageId, specificEmoji = null) {
+  // 1. First 10 Bots React
+  for (let i = 0; i < 10; i++) {
+    const token = tokens[i];
+    if (!token) continue;
 
-def is_admin(user):
-    if not user: return False
-    if user.id == OWNER_ID: return True
-    if user.username and user.username.lower() in ADMIN_USERNAMES: return True
-    return False
+    const emojiToUse = specificEmoji || allowedEmojis[Math.floor(Math.random() * allowedEmojis.length)];
+    const url = `https://api.telegram.org/bot${token}/setMessageReaction`;
 
-def parse_tg_link(link: str):
-    # Match private group link
-    match_c = re.search(r't\.me/c/(\d+)/(\d+)', link)
-    if match_c:
-        return f"-100{match_c.group(1)}", int(match_c.group(2))
-    # Match public link
-    match_public = re.search(r't\.me/([^/]+)/(\d+)', link)
-    if match_public:
-        return f"@{match_public.group(1)}", int(match_public.group(2))
-    return None, None
-
-def apply_premium_emojis(text):
-    emoji_replacements = {
-        "🎉": "5461151367559141950",
-        "✅": "5850633746583129853",
-        "❗️": "5274099962655816924",
-        "🔥": "5397751602956239123",
-        "📢": "5197304993920616826",
-        "⚠️": "5420323339723881652"
+    try {
+      await axios.post(url, { chat_id: chatId, message_id: messageId, reaction: [{ type: 'emoji', emoji: emojiToUse }] });
+      await new Promise(resolve => setTimeout(resolve, 1500)); 
+    } catch (error) {
+      console.error(`Bot ${i + 1} failed:`, error?.response?.data?.description || error.message);
     }
-    for standard_emoji, premium_id in emoji_replacements.items():
-        premium_html = f'<tg-emoji emoji-id="{premium_id}">{standard_emoji}</tg-emoji>'
-        text = text.replace(standard_emoji, premium_html)
-    return text
+  }
 
-def format_stars(amount):
-    if amount >= 1000:
-        if amount % 1000 == 0: return f"{amount // 1000}k"
-        return f"{amount / 1000:.1f}k"
-    return str(amount)
+  // 2. Wait exactly 1 minute (60,000 milliseconds)
+  console.log("First 10 done. Waiting 1 minute before next batch...");
+  await new Promise(resolve => setTimeout(resolve, 60000));
 
-def generate_leaderboard_text():
-    cursor.execute("SELECT username, SUM(stars) as total FROM spenders GROUP BY LOWER(username) ORDER BY total DESC LIMIT 10")
-    all_time = cursor.fetchall()
+  // 3. Last 10 Bots React 
+  for (let i = 10; i < 20; i++) {
+    const token = tokens[i];
+    if (!token) continue;
+
+    const emojiToUse = specificEmoji || allowedEmojis[Math.floor(Math.random() * allowedEmojis.length)];
+    const url = `https://api.telegram.org/bot${token}/setMessageReaction`;
+
+    try {
+      await axios.post(url, { chat_id: chatId, message_id: messageId, reaction: [{ type: 'emoji', emoji: emojiToUse }] });
+      await new Promise(resolve => setTimeout(resolve, 1500)); 
+    } catch (error) {
+      console.error(`Bot ${i + 1} failed:`, error?.response?.data?.description || error.message);
+    }
+  }
+}
+
+listenerBot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg.text || '';
+  const senderUsername = msg.from?.username?.toLowerCase();
+  const chatType = msg.chat.type;
+
+  // --- 1. ADMIN COMMANDS IN PRIVATE CHAT ---
+  if (chatType === 'private' && senderUsername === adminUsername) {
     
-    one_week_ago = datetime.now() - timedelta(days=7)
-    cursor.execute("SELECT username, SUM(stars) as total FROM spenders WHERE timestamp >= ? GROUP BY LOWER(username) ORDER BY total DESC LIMIT 1", (one_week_ago,))
-    this_week = cursor.fetchone()
+    if (text === '/start') {
+      currentAction = 'add';
+      return listenerBot.sendMessage(chatId, "Boss, send the username of the group (e.g., @mygroup) to ADD to the auto-react list.");
+    }
 
-    msg = "❗️Top spenders ⚠️\n@Paidsrobot to check your rank.📢\n\nAll time:\n"
-    if not all_time:
-        msg += "Nobody yet!\n"
-    else:
-        for index, row in enumerate(all_time, start=1):
-            uname = html.escape(str(row[0]))
-            stars = format_stars(row[1])
-            emoji = ' <tg-emoji emoji-id="5008457489528652800">⭐️</tg-emoji>🔥' if index == 1 else ""
-            msg += f'{index}. @{uname} ({stars} Stars <tg-emoji emoji-id="5030538831225422917">⭐️</tg-emoji>){emoji}\n'
-        
-    msg += "\nThis week #1. "
-    if this_week:
-        msg += f"@{html.escape(str(this_week[0]))} ({format_stars(this_week[1])} Stars)\n\n"
-    else:
-        msg += "Nobody yet!\n\n"
-        
-    msg += "⚠️ Every week the #1 spender gets a free Advertisement in @Joiwi ✅ ⚠️"
-    return apply_premium_emojis(msg)
+    if (text === '/cancel') {
+      currentAction = 'cancel';
+      return listenerBot.sendMessage(chatId, "Boss, send the username of the group you want to REMOVE from the auto-react list.");
+    }
 
-async def update_live_messages():
-    cursor.execute("SELECT chat_id, message_id FROM live_messages")
-    messages = cursor.fetchall()
-    if not messages: return
-    new_text = generate_leaderboard_text()
+    if (text === '/check') {
+      currentAction = null; 
+      if (activeGroups.size === 0) {
+        return listenerBot.sendMessage(chatId, "The bots are currently NOT active in any groups.");
+      }
+      const groupList = Array.from(activeGroups).map(g => `@${g}`).join('\n');
+      return listenerBot.sendMessage(chatId, `Currently active in these groups:\n${groupList}`);
+    }
+
+    if (text.toLowerCase() === '/react' || text.toLowerCase() === 'react') {
+      currentAction = 'react_link';
+      return listenerBot.sendMessage(chatId, "Send me the Telegram message link to react to.\n(Format: https://t.me/groupname/123)");
+    }
+
+    if (currentAction && !text.startsWith('/')) {
+      if (currentAction === 'add') {
+        const groupName = text.replace('@', '').toLowerCase();
+        activeGroups.add(groupName);
+        currentAction = null;
+        return listenerBot.sendMessage(chatId, `✅ Added! Bots will now auto-react in @${groupName}.`);
+      }
+
+      if (currentAction === 'cancel') {
+        const groupName = text.replace('@', '').toLowerCase();
+        if (activeGroups.has(groupName)) {
+          activeGroups.delete(groupName);
+          currentAction = null;
+          return listenerBot.sendMessage(chatId, `🛑 Canceled. Bots will no longer react in @${groupName}.`);
+        } else {
+          return listenerBot.sendMessage(chatId, `I couldn't find @${groupName} in the active list. Type /check to see active groups.`);
+        }
+      }
+
+      // STEP 1 of /react: Process the link
+      if (currentAction === 'react_link') {
+        const linkRegex = /t\.me\/(?:c\/)?([a-zA-Z0-9_]+)\/(\d+)/;
+        const match = text.match(linkRegex);
+
+        if (match) {
+          let targetChatId = match[1];
+          const targetMessageId = match[2];
+
+          if (/^\d+$/.test(targetChatId)) {
+            targetChatId = `-100${targetChatId}`; 
+          } else {
+            targetChatId = `@${targetChatId}`;
+          }
+
+          pendingReactChatId = targetChatId;
+          pendingReactMessageId = targetMessageId;
+          currentAction = 'react_emoji'; // Move to step 2
+
+          return listenerBot.sendMessage(chatId, "Link saved! Now send me the ONE specific emoji you want all bots to use (e.g., 🖕🏻 or 😢).\n\nOr type 'random' to use the default mixed emojis.");
+        } else {
+          return listenerBot.sendMessage(chatId, "Invalid link format. Try again with /react.");
+        }
+      }
+
+      // STEP 2 of /react: Process the custom emoji and trigger
+      if (currentAction === 'react_emoji') {
+        currentAction = null;
+        let chosenEmoji = text.trim();
+        if (chosenEmoji.toLowerCase() === 'random') {
+          chosenEmoji = null; // Uses the random list
+        }
+
+        listenerBot.sendMessage(chatId, `Command accepted! Deploying staggered reactions...`);
+        triggerReactions(pendingReactChatId, pendingReactMessageId, chosenEmoji)
+          .then(() => listenerBot.sendMessage(chatId, "✅ All staggered reactions finished!"))
+          .catch(() => listenerBot.sendMessage(chatId, "⚠️ Finished, but check Render logs for any failures."));
+        return;
+      }
+    }
+  }
+
+  // --- 2. AUTO-REACTION LOGIC FOR ACTIVE GROUPS ---
+  if (chatType === 'group' || chatType === 'supergroup') {
+    const currentGroupUsername = msg.chat.username?.toLowerCase();
     
-    for chat_id, msg_id in messages:
-        try:
-            await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=new_text, parse_mode="HTML")
-        except TelegramBadRequest as e:
-            error_msg = str(e).lower()
-            if "message to edit not found" in error_msg or "message can't be edited" in error_msg:
-                cursor.execute("DELETE FROM live_messages WHERE chat_id=? AND message_id=?", (chat_id, msg_id))
-                conn.commit()
-        except Exception:
-            pass
-
-@dp.message(Command("react"))
-async def cmd_react(message: Message, state: FSMContext):
-    if not is_admin(message.from_user): return
-    await state.set_state(ReactPost.waiting_for_link)
-    await message.reply("🔗 Please send the Telegram message link you want me to react to.")
-
-@dp.message(ReactPost.waiting_for_link)
-async def process_react_link(message: Message, state: FSMContext):
-    link = message.text.strip()
-    chat_id, msg_id = parse_tg_link(link)
-    if not chat_id or not msg_id:
-        return await message.reply("⚠️ Invalid Telegram link. Please make sure you copy the exact link to the message.")
-    
-    await state.update_data(chat_id=chat_id, message_id=msg_id)
-    await state.set_state(ReactPost.waiting_for_emoji)
-    await message.reply("📝 Now send the emoji you want me to react with (e.g., 🖕 or 😢).\n\n*Note:* Bots can only use standard yellow emojis. Skin tones are not supported.")
-
-@dp.message(ReactPost.waiting_for_emoji)
-async def process_react_emoji(message: Message, state: FSMContext):
-    data = await state.get_data()
-    chat_id = data.get("chat_id")
-    msg_id = data.get("message_id")
-    emoji = message.text.strip()
-    
-    try:
-        # set_message_reaction automatically overwrites old reactions from the bot
-        await bot.set_message_reaction(
-            chat_id=chat_id, 
-            message_id=msg_id, 
-            reaction=[ReactionTypeEmoji(emoji=emoji)]
-        )
-        await message.reply("✅ Successfully applied the new reaction and removed the old one!")
-    except Exception as e:
-        await message.reply(f"⚠️ Failed to react. Make sure it's a valid base emoji and the bot is an admin in that chat.\nError: `{e}`")
-    
-    await state.clear()
-
-@dp.message(Command("resetall"))
-async def reset_database(message: Message):
-    if not is_admin(message.from_user): return
-    cursor.execute("DELETE FROM spenders")
-    cursor.execute("DELETE FROM sqlite_sequence WHERE name='spenders'")
-    conn.commit()
-    await update_live_messages()
-    await message.reply("✅ All old stats and top members have been permanently deleted! Starting fresh from today.", parse_mode="HTML")
-
-@dp.message(Command("edit"))
-async def edit_spenders(message: Message):
-    if not is_admin(message.from_user): return
-    parts = message.text.split()
-    if len(parts) != 3:
-        return await message.reply("⚠️ Usage: /edit @username new_amount")
-    username = parts[1].replace("@", "")
-    try:
-        new_amount = int(parts[2])
-    except ValueError:
-        return await message.reply("⚠️ The amount must be a number.")
-        
-    cursor.execute("DELETE FROM spenders WHERE LOWER(username)=?", (username.lower(),))
-    if new_amount > 0:
-        cursor.execute("INSERT INTO spenders (user_id, username, stars, timestamp) VALUES (?, ?, ?, ?)", (0, username, new_amount, datetime.now()))
-        reply_msg = f"✅ Set @{username}'s total to {new_amount} Stars!"
-    else:
-        reply_msg = f"🗑 Removed @{username} from the leaderboard entirely."
-
-    conn.commit()
-    await update_live_messages()
-    await message.reply(apply_premium_emojis(reply_msg), parse_mode="HTML")
-
-@dp.message(Command("addstars"))
-async def add_old_spenders(message: Message):
-    if not is_admin(message.from_user): return
-    parts = message.text.split()
-    if len(parts) != 3:
-        return await message.reply("⚠️ Usage: /addstars @username amount")
-    username = parts[1].replace("@", "")
-    try:
-        stars_to_add = int(parts[2])
-    except ValueError:
-        return await message.reply("⚠️ The amount must be a number.")
-        
-    cursor.execute("INSERT INTO spenders (user_id, username, stars, timestamp) VALUES (?, ?, ?, ?)", (0, username, stars_to_add, datetime.now()))
-    conn.commit()
-    await update_live_messages()
-    await message.reply(apply_premium_emojis(f"✅ Added {stars_to_add} Stars to @{username}!"), parse_mode="HTML")
-
-@dp.message(Command("invest"))
-@dp.channel_post(Command("invest"))
-async def setup_live_leaderboard(message: Message):
-    text = generate_leaderboard_text()
-    sent_msg = await message.answer(text, parse_mode="HTML")
-    if is_admin(message.from_user):
-        cursor.execute("INSERT INTO live_messages (chat_id, message_id) VALUES (?, ?)", (message.chat.id, sent_msg.message_id))
-        conn.commit()
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-@dp.message(Command("announcewinner"))
-async def cmd_announcewinner(message: Message):
-    if not is_admin(message.from_user): return
-    sent = await send_winner_announcement()
-    if sent:
-        await message.reply("✅ Winner announcement successfully sent to all connected groups!")
-    else:
-        await message.reply("⚠️ No spender found this week or no groups connected yet.")
-
-@dp.message(Command("getemoji"))
-async def get_emoji_id(message: Message):
-    if not is_admin(message.from_user): return
-    if message.entities:
-        for entity in message.entities:
-            if entity.type == "custom_emoji":
-                return await message.reply(f"Here is the ID for that Premium Emoji:\n`{entity.custom_emoji_id}`")
-    await message.reply("⚠️ No premium emoji found in that message. Send `/getemoji` along with a premium emoji.")
-
-@dp.message(Command("make"))
-async def cmd_make(message: Message, state: FSMContext):
-    if not is_admin(message.from_user): return
-    await state.set_state(MakePost.waiting_for_paragraph)
-    await message.reply("📝 Please send the paragraph. Any standard emojis mapped in the code will be upgraded to Premium.")
-
-@dp.message(MakePost.waiting_for_paragraph)
-async def process_paragraph(message: Message, state: FSMContext):
-    await state.clear()
-    cursor.execute("SELECT DISTINCT chat_id FROM live_messages")
-    groups = cursor.fetchall()
-    if not groups:
-        return await message.reply("⚠️ No active groups found! Please use /invest in a group first.")
-
-    raw_text = message.html_text if message.html_text else message.text
-    formatted_text = apply_premium_emojis(raw_text)
-    success_count = 0
-    for group in groups:
-        chat_id = group[0]
-        try:
-            await bot.send_message(chat_id=chat_id, text=formatted_text, parse_mode="HTML")
-            success_count += 1
-        except Exception as e:
-            await bot.send_message(OWNER_ID, f"⚠️ Failed to send to group ID {chat_id}. Reason: {str(e)}")
-    await message.reply(f"✅ Paragraph successfully posted to {success_count} group(s) with upgraded emojis!")
-
-@dp.message()
-async def track_stars(message: Message):
-    if message.chat.type not in ["group", "supergroup"]: return
-    if message.from_user.is_bot: return 
-    if message.text and message.text.startswith('/'): return 
-        
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    cursor.execute("INSERT INTO spenders (user_id, username, stars, timestamp) VALUES (?, ?, ?, ?)", (user_id, username, STARS_PER_POST, datetime.now()))
-    conn.commit()
-    await update_live_messages()
-
-    try:
-        emojis = ["😢", "🖕"]
-        chosen = random.choice(emojis)
-        await message.react([ReactionTypeEmoji(emoji=chosen)])
-    except Exception:
-        pass
-
-async def send_winner_announcement():
-    cursor.execute("SELECT chat_id FROM live_messages")
-    chats = set(row[0] for row in cursor.fetchall())
-    if not chats: return False
-
-    one_week_ago = datetime.now() - timedelta(days=7)
-    cursor.execute("SELECT username, SUM(stars) as total FROM spenders WHERE timestamp >= ? GROUP BY LOWER(username) ORDER BY total DESC LIMIT 1", (one_week_ago,))
-    winner = cursor.fetchone()
-    
-    if not winner:
-        cursor.execute("SELECT username, SUM(stars) as total FROM spenders GROUP BY LOWER(username) ORDER BY total DESC LIMIT 1")
-        winner = cursor.fetchone()
-
-    if winner:
-        msg = f"🎉 WINNER ANNOUNCEMENT! 🎉\n\nCongratulations to @{winner[0]} for being #1 with {format_stars(winner[1])} Stars! 🥇\n\nYou have won a FREE advertisement in @Joiwi ✅ Please contact the owner to redeem your prize."
-        formatted_msg = apply_premium_emojis(msg)
-        for chat_id in chats:
-            try:
-                await bot.send_message(chat_id, formatted_msg, parse_mode="HTML")
-            except Exception:
-                pass
-        return True
-    return
+    if (currentGroupUsername && activeGroups.has(currentGroupUsername)) {
+      triggerReactions(chatId, msg.message_id); // Auto-reactions still use random list
+    }
+  }
+});
