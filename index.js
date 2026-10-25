@@ -17,7 +17,9 @@ const tokens = [
 ];
 
 const listenerBot = new TelegramBot(tokens[0], { polling: true });
-const allowedEmojis = ['⚡', '💅🏻', '😭', '😁', '❤️‍🔥', '❤️', '🖕🏻', '😢'];
+
+// UPDATED EMOJI LIST (Removed the previous ones)
+const allowedEmojis = ['💋', '⚡', '😭', '😁', '💘', '❤️', '🍓', '❤️‍🔥', '😂'];
 
 // --- MULTIPLE GROUPS & STATE MANAGEMENT ---
 let activeGroups = new Set(); 
@@ -26,21 +28,21 @@ let pendingReactChatId = null;
 let pendingReactMessageId = null;
 const adminUsername = 'disturbor';
 
-console.log("Irshaa Multi-Group listener is running...");
+console.log("Main listener bot is running...");
 
 // Reaction Logic with Custom Emoji Support & 1-Minute Delay
 async function triggerReactions(chatId, messageId, specificEmoji = null) {
-  // 1. First 10 Bots React
+  // 1. First 10 Bots React (Bots 1-10)
   for (let i = 0; i < 10; i++) {
     const token = tokens[i];
-    if (!token) continue;
+    if (!token) continue; // Safely skips if the token slot is empty
 
     const emojiToUse = specificEmoji || allowedEmojis[Math.floor(Math.random() * allowedEmojis.length)];
     const url = `https://api.telegram.org/bot${token}/setMessageReaction`;
 
     try {
       await axios.post(url, { chat_id: chatId, message_id: messageId, reaction: [{ type: 'emoji', emoji: emojiToUse }] });
-      await new Promise(resolve => setTimeout(resolve, 1500)); 
+      await new Promise(resolve => setTimeout(resolve, 1500)); // 1.5s delay between bots
     } catch (error) {
       console.error(`Bot ${i + 1} failed:`, error?.response?.data?.description || error.message);
     }
@@ -50,7 +52,7 @@ async function triggerReactions(chatId, messageId, specificEmoji = null) {
   console.log("First 10 done. Waiting 1 minute before next batch...");
   await new Promise(resolve => setTimeout(resolve, 60000));
 
-  // 3. Last 10 Bots React 
+  // 3. Last 10 Bots React (Bots 11-20)
   for (let i = 10; i < 20; i++) {
     const token = tokens[i];
     if (!token) continue;
@@ -136,9 +138,9 @@ listenerBot.on('message', async (msg) => {
 
           pendingReactChatId = targetChatId;
           pendingReactMessageId = targetMessageId;
-          currentAction = 'react_emoji'; // Move to step 2
+          currentAction = 'react_emoji'; 
 
-          return listenerBot.sendMessage(chatId, "Link saved! Now send me the ONE specific emoji you want all bots to use (e.g., 🖕🏻 or 😢).\n\nOr type 'random' to use the default mixed emojis.");
+          return listenerBot.sendMessage(chatId, "Link saved! Now send me the ONE specific emoji you want all bots to use (e.g., 💋 or ⚡).\n\nOr type 'random' to use the default mixed emojis.");
         } else {
           return listenerBot.sendMessage(chatId, "Invalid link format. Try again with /react.");
         }
@@ -149,7 +151,7 @@ listenerBot.on('message', async (msg) => {
         currentAction = null;
         let chosenEmoji = text.trim();
         if (chosenEmoji.toLowerCase() === 'random') {
-          chosenEmoji = null; // Uses the random list
+          chosenEmoji = null; // Uses the random array
         }
 
         listenerBot.sendMessage(chatId, `Command accepted! Deploying staggered reactions...`);
@@ -166,7 +168,4 @@ listenerBot.on('message', async (msg) => {
     const currentGroupUsername = msg.chat.username?.toLowerCase();
     
     if (currentGroupUsername && activeGroups.has(currentGroupUsername)) {
-      triggerReactions(chatId, msg.message_id); // Auto-reactions still use random list
-    }
-  }
-});
+      triggerReactions(chat
