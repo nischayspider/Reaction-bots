@@ -5,8 +5,8 @@ const express = require('express');
 
 // --- 24/7 KEEP-ALIVE SERVER ---
 const app = express();
-app.get('/', (req, res) => res.send('Irshaa Bot is running 24/7!'));
-app.listen(process.env.PORT || 3000, () => console.log('Web server is awake.'));
+app.get('/', (req, res) => res.send('Kiara Agent is running 24/7!'));
+app.listen(process.env.PORT || 3000, () => console.log('Kiara Web server is awake.'));
 
 // Array of all 20 tokens
 const tokens = [
@@ -18,7 +18,7 @@ const tokens = [
 
 const listenerBot = new TelegramBot(tokens[0], { polling: true });
 
-// UPDATED EMOJI LIST (Removed the previous ones)
+// NEW EMOJI LIST PERMANENTLY UPDATED
 const allowedEmojis = ['💋', '⚡', '😭', '😁', '💘', '❤️', '🍓', '❤️‍🔥', '😂'];
 
 // --- MULTIPLE GROUPS & STATE MANAGEMENT ---
@@ -28,7 +28,7 @@ let pendingReactChatId = null;
 let pendingReactMessageId = null;
 const adminUsername = 'disturbor';
 
-console.log("Main listener bot is running...");
+console.log("Kiara Main Listener is online...");
 
 // Reaction Logic with Custom Emoji Support & 1-Minute Delay
 async function triggerReactions(chatId, messageId, specificEmoji = null) {
@@ -140,7 +140,7 @@ listenerBot.on('message', async (msg) => {
           pendingReactMessageId = targetMessageId;
           currentAction = 'react_emoji'; 
 
-          return listenerBot.sendMessage(chatId, "Link saved! Now send me the ONE specific emoji you want all bots to use (e.g., 💋 or ⚡).\n\nOr type 'random' to use the default mixed emojis.");
+          return listenerBot.sendMessage(chatId, "Link saved! Now send me the ONE specific emoji you want all bots to use (e.g., ❤️ or 😂).\n\nOr type 'random' to use the default mixed emojis.");
         } else {
           return listenerBot.sendMessage(chatId, "Invalid link format. Try again with /react.");
         }
@@ -154,7 +154,7 @@ listenerBot.on('message', async (msg) => {
           chosenEmoji = null; // Uses the random array
         }
 
-        listenerBot.sendMessage(chatId, `Command accepted! Deploying staggered reactions...`);
+        listenerBot.sendMessage(chatId, `Command accepted! Kiara is deploying staggered reactions...`);
         triggerReactions(pendingReactChatId, pendingReactMessageId, chosenEmoji)
           .then(() => listenerBot.sendMessage(chatId, "✅ All staggered reactions finished!"))
           .catch(() => listenerBot.sendMessage(chatId, "⚠️ Finished, but check Render logs for any failures."));
@@ -168,4 +168,7 @@ listenerBot.on('message', async (msg) => {
     const currentGroupUsername = msg.chat.username?.toLowerCase();
     
     if (currentGroupUsername && activeGroups.has(currentGroupUsername)) {
-      triggerReactions(chat
+      triggerReactions(chatId, msg.message_id); 
+    }
+  }
+});
