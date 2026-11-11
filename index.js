@@ -27,11 +27,13 @@ let currentAction = null;
 let pendingReactChatId = null;
 let pendingReactMessageId = null;
 
+// NEW: Broadcast State
+let broadcastMessageIds = new Map(); // Tracks { groupName: messageId } for the /remove command
+
 // --- ADMIN SECURITY ---
 const adminUsernames = ['disturbor', 'madciara'];
-// Hardcoded IDs for @disturbor and @madciara (Bulletproof access)
 const adminIds = [6146191046, 206240767]; 
-const groupPinModes = new Map(); // Tracks { type: 1|2, weekTimer, announcementMsgId } per chat
+const groupPinModes = new Map(); 
 
 console.log("Kiara Main Listener is online...");
 
@@ -85,21 +87,74 @@ listenerBot.on('message', async (msg) => {
   const text = msg.text || '';
   const chatType = msg.chat.type;
 
-  // Make username check bulletproof (remove @ and force lowercase)
   const rawUsername = msg.from?.username || '';
   const senderUsername = rawUsername.replace('@', '').toLowerCase();
   const senderId = msg.from?.id;
 
-  // Checks both Username OR Numeric ID
+  // Security Checks
   const isAdmin = adminUsernames.includes(senderUsername) || adminIds.includes(senderId);
+  const isDisturbor = senderUsername === 'disturbor' || senderId === 6146191046; // Strict check for /make and /remove
 
-  // Debugging tool: Log all DMs so you can see exactly who the bot thinks you are
   if (chatType === 'private') {
-    console.log(`[DM Received] ID: ${senderId} | Username: ${senderUsername || 'NONE SET'} | IsAdmin: ${isAdmin}`);
+    console.log(`[DM Received] ID: ${senderId} | Username: ${senderUsername || 'NONE SET'} | IsAdmin: ${isAdmin} | IsDisturbor: ${isDisturbor}`);
   }
 
-  // --- 1. ADMIN COMMANDS (AUTO-REACT SETUP IN PRIVATE CHAT) ---
+  // --- 1. ADMIN COMMANDS (PRIVATE CHAT ONLY) ---
   if (chatType === 'private' && isAdmin) {
+    
+    // --- NEW: /make and /remove (STRICTLY FOR DISTURBOR) ---
+    if (text === '/make') {
+      if (!isDisturbor) return listenerBot.sendMessage(chatId, "❌ Only @disturbor can use the /make command.");
+      currentAction = 'make_broadcast';
+      return listenerBot.sendMessage(chatId, "Boss, send the paragraph you want to broadcast. I will send it to all active groups.");
+    }
+
+    if (text === '/remove') {
+      if (!isDisturbor) return listenerBot.sendMessage(chatId, "❌ Only @disturbor can use the /remove command.");
+      if (broadcastMessageIds.size === 0) return listenerBot.sendMessage(chatId, "No active broadcast found to remove.");
+      
+      let deletedCount = 0;
+      for (const [groupName, msgId] of broadcastMessageIds.entries()) {
+        try {
+          await listenerBot.deleteMessage(`@${groupName}`, msgId);
+          deletedCount++;
+        } catch (err) {
+          console.error(`Failed to delete broadcast in @${groupName}`, err.message);
+        }
+      }
+      broadcastMessageIds.clear(); // Reset tracking
+      return listenerBot.sendMessage(chatId, `🗑️ Broadcast successfully removed from ${deletedCount} groups.`);
+    }
+
+    // Processing the paragraph for /make
+    if (currentAction === 'make_broadcast' && !text.startsWith('/')) {
+      if (!isDisturbor) return; 
+      currentAction = null;
+      broadcastMessageIds.clear(); // Clear old tracking
+
+      if (activeGroups.size === 0) {
+        return listenerBot.sendMessage(chatId, "You haven't added any groups to the active list yet! Use /start first.");
+      }
+
+      let successCount = 0;
+      // Wraps your text with a premium emoji at the start
+      const broadcastText = `<tg-emoji emoji-id="5362034620562940839">💎</tg-emoji> ${text}`;
+
+      listenerBot.sendMessage(chatId, `Deploying broadcast to ${activeGroups.size} groups...`);
+
+      for (const group of activeGroups) {
+        try {
+          const sentMsg = await listenerBot.sendMessage(`@${group}`, broadcastText, { parse_mode: 'HTML' });
+          broadcastMessageIds.set(group, sentMsg.message_id); // Save message ID for /remove
+          successCount++;
+        } catch (error) {
+          console.error(`Failed to broadcast to @${group}:`, error.message);
+        }
+      }
+      return listenerBot.sendMessage(chatId, `✅ Broadcast successfully sent to ${successCount} groups! Type /remove to delete them all at once.`);
+    }
+
+    // --- STANDARD ADMIN COMMANDS ---
     if (text === '/start') {
       currentAction = 'add';
       return listenerBot.sendMessage(chatId, "Boss, send the username of the group (e.g., @mygroup) to ADD to the auto-react list.");
@@ -164,7 +219,7 @@ listenerBot.on('message', async (msg) => {
     }
   }
 
-  // --- 2. ADMIN PIN COMMANDS (CAN BE USED DIRECTLY IN GROUPS) ---
+  // --- 2. ADMIN PIN COMMANDS (DIRECTLY IN GROUPS) ---
   if (isAdmin && text.startsWith('/ciarapin')) {
     if (groupPinModes.has(chatId)) clearTimeout(groupPinModes.get(chatId).weekTimer);
 
@@ -194,8 +249,9 @@ listenerBot.on('message', async (msg) => {
   // --- 3. AUTO-REACTION & AUTO-PIN LOGIC FOR GROUPS ---
   if (chatType === 'group' || chatType === 'supergroup') {
     
-    // Auto-React
     const currentGroupUsername = msg.chat.username?.toLowerCase();
+    
+    // Auto-React
     if (currentGroupUsername && activeGroups.has(currentGroupUsername)) {
       triggerReactions(chatId, msg.message_id); 
     }
@@ -207,37 +263,30 @@ listenerBot.on('message', async (msg) => {
       try {
         const member = await listenerBot.getChatMember(chatId, msg.from.id);
         
-        // ONLY pin if user is NOT an admin/creator AND the pin slot is open (announcementMsgId is not null)
         if (member.status !== 'administrator' && member.status !== 'creator' && pinMode.announcementMsgId) {
           
           await listenerBot.pinChatMessage(chatId, msg.message_id);
 
-          // 1. Delete the old announcement to close the slot
           listenerBot.deleteMessage(chatId, pinMode.announcementMsgId).catch(() => {});
           pinMode.announcementMsgId = null; 
           
-          // 2. Send the reply "your post is pinned..."
           const replyMsg = await listenerBot.sendMessage(chatId, `your post is pinned for ${pinMode.type} hour enjoy <tg-emoji emoji-id="5845860062232318025">🔥</tg-emoji>`, {
             reply_to_message_id: msg.message_id,
             parse_mode: 'HTML'
           });
 
-          // 3. Delete the reply exactly 2 minutes later
           setTimeout(() => {
             listenerBot.deleteMessage(chatId, replyMsg.message_id).catch(() => {});
           }, 120000); 
 
-          // 4. Unpin automatically after 1 or 2 hours, then re-announce to open the slot again
           const unpinDelayMs = pinMode.type * 60 * 60 * 1000;
           
           setTimeout(async () => {
             await listenerBot.unpinChatMessage(chatId, msg.message_id).catch(() => {});
             
-            // Check if pin mode is still active in this group
             if (groupPinModes.has(chatId)) {
               const currentMode = groupPinModes.get(chatId);
               
-              // Only send a new announcement if one isn't already there
               if (!currentMode.announcementMsgId) {
                 const announcementText = currentMode.type === 1 
                   ? `<tg-emoji emoji-id="5362034620562940839">💎</tg-emoji> Next post will be pinned for an Hour <tg-emoji emoji-id="5274126849151101077">📌</tg-emoji> (except admins <tg-emoji emoji-id="6314110509377398413">👑</tg-emoji>)`
@@ -245,7 +294,7 @@ listenerBot.on('message', async (msg) => {
                 
                 try {
                   const newAnnouncement = await listenerBot.sendMessage(chatId, announcementText, { parse_mode: 'HTML' });
-                  currentMode.announcementMsgId = newAnnouncement.message_id; // Slot is officially OPEN again
+                  currentMode.announcementMsgId = newAnnouncement.message_id; 
                 } catch (err) {
                   console.error("Failed to re-send announcement.", err.message);
                 }
