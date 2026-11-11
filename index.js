@@ -29,7 +29,7 @@ let pendingReactMessageId = null;
 
 // NEW: Multiple Admins & Pin State Tracking
 const adminUsernames = ['disturbor', 'madciara'];
-const groupPinModes = new Map(); // Tracks { type: 1|2, weekTimer } per chat
+const groupPinModes = new Map(); // Tracks { type: 1|2, weekTimer, announcementMsgId } per chat
 
 console.log("Kiara Main Listener is online...");
 
@@ -158,14 +158,16 @@ listenerBot.on('message', async (msg) => {
 
     if (text === '/ciarapin1') {
       const weekTimer = startWeekTimer(chatId);
-      groupPinModes.set(chatId, { type: 1, weekTimer });
-      return listenerBot.sendMessage(chatId, `<tg-emoji emoji-id="5362034620562940839">💎</tg-emoji> Next post will be pinned for an Hour <tg-emoji emoji-id="5274126849151101077">📌</tg-emoji> (except admins <tg-emoji emoji-id="6314110509377398413">👑</tg-emoji>)`, { parse_mode: 'HTML' });
+      const announcement = await listenerBot.sendMessage(chatId, `<tg-emoji emoji-id="5362034620562940839">💎</tg-emoji> Next post will be pinned for an Hour <tg-emoji emoji-id="5274126849151101077">📌</tg-emoji> (except admins <tg-emoji emoji-id="6314110509377398413">👑</tg-emoji>)`, { parse_mode: 'HTML' });
+      groupPinModes.set(chatId, { type: 1, weekTimer, announcementMsgId: announcement.message_id });
+      return;
     }
     
     if (text === '/ciarapin2') {
       const weekTimer = startWeekTimer(chatId);
-      groupPinModes.set(chatId, { type: 2, weekTimer });
-      return listenerBot.sendMessage(chatId, `<tg-emoji emoji-id="5362034620562940839">💎</tg-emoji> Next post will be pinned for 2 hour then <tg-emoji emoji-id="5274126849151101077">📌</tg-emoji> (except admins <tg-emoji emoji-id="6314110509377398413">👑</tg-emoji>)`, { parse_mode: 'HTML' });
+      const announcement = await listenerBot.sendMessage(chatId, `<tg-emoji emoji-id="5362034620562940839">💎</tg-emoji> Next post will be pinned for 2 hour then <tg-emoji emoji-id="5274126849151101077">📌</tg-emoji> (except admins <tg-emoji emoji-id="6314110509377398413">👑</tg-emoji>)`, { parse_mode: 'HTML' });
+      groupPinModes.set(chatId, { type: 2, weekTimer, announcementMsgId: announcement.message_id });
+      return;
     }
   }
 
@@ -197,20 +199,32 @@ listenerBot.on('message', async (msg) => {
         if (member.status !== 'administrator' && member.status !== 'creator') {
           
           await listenerBot.pinChatMessage(chatId, msg.message_id);
+
+          // 1. Delete the old "Next post will be pinned..." announcement message
+          if (pinMode.announcementMsgId) {
+            listenerBot.deleteMessage(chatId, pinMode.announcementMsgId).catch(() => {});
+            pinMode.announcementMsgId = null; // Clear it so it only deletes once
+          }
           
-          await listenerBot.sendMessage(chatId, `your post is pinned for ${pinMode.type} hour enjoy <tg-emoji emoji-id="5845860062232318025">🔥</tg-emoji>`, {
+          // 2. Send the reply "your post is pinned..."
+          const replyMsg = await listenerBot.sendMessage(chatId, `your post is pinned for ${pinMode.type} hour enjoy <tg-emoji emoji-id="5845860062232318025">🔥</tg-emoji>`, {
             reply_to_message_id: msg.message_id,
             parse_mode: 'HTML'
           });
 
-          // Unpin automatically after 1 or 2 hours
+          // 3. Delete the "your post is pinned..." reply exactly 2 minutes later
+          setTimeout(() => {
+            listenerBot.deleteMessage(chatId, replyMsg.message_id).catch(() => {});
+          }, 120000); // 120,000 milliseconds = 2 minutes
+
+          // 4. Unpin the actual post automatically after 1 or 2 hours
           const unpinDelayMs = pinMode.type * 60 * 60 * 1000;
           setTimeout(() => {
             listenerBot.unpinChatMessage(chatId, msg.message_id).catch(() => {});
           }, unpinDelayMs);
         }
       } catch (err) {
-        console.error("Failed to pin message or fetch chat member. Ensure bot is an Admin.", err.message);
+        console.error("Failed to pin/delete message or fetch chat member. Ensure bot is an Admin with delete/pin rights.", err.message);
       }
     }
   }
