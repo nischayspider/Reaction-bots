@@ -27,10 +27,12 @@ let currentAction = null;
 let pendingReactChatId = null;
 let pendingReactMessageId = null;
 
-// Bot Owners
-const botAdmins = ['disturbor', 'madciara'];
-// Pinning State Manager
-const pinningModes = new Map(); // Stores { durationHours } per chatId
+// NEW: Multiple Admins
+const admins = ['disturbor', 'madciara'];
+
+// NEW: Auto-Pin State Management (Tracks per group)
+// Structure: { chatId: { durationHours: 1|2, expiry: timestamp } }
+let autoPinGroups = {}; 
 
 console.log("Kiara Main Listener is online...");
 
@@ -46,7 +48,7 @@ async function triggerReactions(chatId, messageId, specificEmoji = null) {
 
     try {
       await axios.post(url, { chat_id: chatId, message_id: messageId, reaction: [{ type: 'emoji', emoji: emojiToUse }] });
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 1500)); 
     } catch (error) {
       console.error(`Bot ${i + 1} failed:`, error?.response?.data?.description || error.message);
     }
@@ -79,11 +81,10 @@ listenerBot.on('message', async (msg) => {
   const senderUsername = msg.from?.username?.toLowerCase();
   const chatType = msg.chat.type;
   
-  // Check if sender is one of the owners
-  const isOwner = botAdmins.includes(senderUsername);
+  const isAdmin = admins.includes(senderUsername);
 
-  // --- 1. ADMIN COMMANDS IN PRIVATE CHAT ---
-  if (chatType === 'private' && isOwner) {
+  // --- 1. ADMIN COMMANDS IN PRIVATE CHAT (Reactions Setup) ---
+  if (chatType === 'private' && isAdmin) {
     
     if (text === '/start') {
       currentAction = 'add';
@@ -128,7 +129,7 @@ listenerBot.on('message', async (msg) => {
         }
       }
 
-      // STEP 1 of /react
+      // STEP 1 of /react: Process the link
       if (currentAction === 'react_link') {
         const linkRegex = /t\.me\/(?:c\/)?([a-zA-Z0-9_]+)\/(\d+)/;
         const match = text.match(linkRegex);
@@ -153,12 +154,12 @@ listenerBot.on('message', async (msg) => {
         }
       }
 
-      // STEP 2 of /react
+      // STEP 2 of /react: Process the custom emoji and trigger
       if (currentAction === 'react_emoji') {
         currentAction = null;
         let chosenEmoji = text.trim();
         if (chosenEmoji.toLowerCase() === 'random') {
-          chosenEmoji = null;
+          chosenEmoji = null; 
         }
 
         listenerBot.sendMessage(chatId, `Command accepted! Kiara is deploying staggered reactions...`);
@@ -170,60 +171,76 @@ listenerBot.on('message', async (msg) => {
     }
   }
 
-  // --- 2. GROUP COMMANDS & LOGIC (AUTO-REACT & PINNING) ---
+  // --- 2. PIN COMMANDS (Allowed in Groups or Private, but intended for Groups) ---
+  if (isAdmin) {
+    if (text.startsWith('/ciarapin1')) {
+      const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+      autoPinGroups[chatId] = { durationHours: 1, expiry: Date.now() + oneWeekMs };
+      
+      const reply = `<tg-emoji emoji-id="5362034620562940839">👑</tg-emoji> Next post will be pinned for an Hour <tg-emoji emoji-id="5274126849151101077">⭐</tg-emoji> (except admins then premium <tg-emoji emoji-id="6314110509377398413">🌟</tg-emoji>)`;
+      return listenerBot.sendMessage(chatId, reply, { parse_mode: 'HTML' });
+    }
+
+    if (text.startsWith('/ciarapin2')) {
+      const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+      autoPinGroups[chatId] = { durationHours: 2, expiry: Date.now() + oneWeekMs };
+      
+      const reply = `<tg-emoji emoji-id="5362034620562940839">👑</tg-emoji> Next post will be pinned for 2 hour then <tg-emoji emoji-id="5274126849151101077">⭐</tg-emoji> (except admins premium <tg-emoji emoji-id="6314110509377398413">🌟</tg-emoji>)`;
+      return listenerBot.sendMessage(chatId, reply, { parse_mode: 'HTML' });
+    }
+
+    if (text.startsWith('/cancelpin')) {
+      if (autoPinGroups[chatId]) {
+        delete autoPinGroups[chatId];
+        return listenerBot.sendMessage(chatId, "🛑 Auto-pinning has been disabled for this chat.");
+      }
+    }
+  }
+
+  // --- 3. AUTO-REACTION & AUTO-PIN LOGIC FOR GROUPS ---
   if (chatType === 'group' || chatType === 'supergroup') {
     const currentGroupUsername = msg.chat.username?.toLowerCase();
     
-    // Auto-react logic for stored groups
+    // Check Auto-Reaction
     if (currentGroupUsername && activeGroups.has(currentGroupUsername)) {
       triggerReactions(chatId, msg.message_id); 
     }
 
-    // -- PINNING COMMANDS (Owners Only) --
-    if (text === '/ciarapin1' && isOwner) {
-      pinningModes.set(chatId, { durationHours: 1 });
-      return listenerBot.sendMessage(chatId, `<tg-emoji emoji-id="5362034620562940839">📌</tg-emoji> Next post will be pinned for an Hour then <tg-emoji emoji-id="5274126849151101077">⏳</tg-emoji> (except admins then <tg-emoji emoji-id="6314110509377398413">🛡</tg-emoji>)`, { parse_mode: 'HTML' });
-    }
+    // Check Auto-Pin Logic
+    if (autoPinGroups[chatId]) {
+      const pinSettings = autoPinGroups[chatId];
+      
+      // Check if 1 week has passed
+      if (Date.now() > pinSettings.expiry) {
+        delete autoPinGroups[chatId];
+        return listenerBot.sendMessage(chatId, "Your 1-week pin session ended. Do you still wanna use /ciarapin1 or change it to /ciarapin2 ok?");
+      }
 
-    if (text === '/ciarapin2' && isOwner) {
-      pinningModes.set(chatId, { durationHours: 2 });
-      return listenerBot.sendMessage(chatId, `<tg-emoji emoji-id="5362034620562940839">📌</tg-emoji> Next post will be pinned for 2 hour then <tg-emoji emoji-id="5274126849151101077">⏳</tg-emoji> (except admins then <tg-emoji emoji-id="6314110509377398413">🛡</tg-emoji>)`, { parse_mode: 'HTML' });
-    }
-
-    if (text === '/cancelpin' && isOwner) {
-      pinningModes.delete(chatId);
-      return listenerBot.sendMessage(chatId, "Pinning mode canceled.");
-    }
-
-    // -- AUTO-PIN LOGIC --
-    // If the chat is in a pinning mode and the message isn't one of our setup commands
-    if (pinningModes.has(chatId) && !text.startsWith('/ciarapin') && !text.startsWith('/cancelpin')) {
+      // Process pinning if sender is NOT an admin
       try {
-        // Check if the person sending the message is a group admin
-        const member = await listenerBot.getChatMember(chatId, msg.from.id);
-        const isGroupAdmin = ['creator', 'administrator'].includes(member.status);
+        const chatMember = await listenerBot.getChatMember(chatId, msg.from.id);
+        const isGroupAdmin = ['creator', 'administrator'].includes(chatMember.status);
 
-        // If they are a normal member, execute the pin protocol
         if (!isGroupAdmin) {
-          const mode = pinningModes.get(chatId);
-          
           // Pin the message
           await listenerBot.pinChatMessage(chatId, msg.message_id);
           
-          // Reply instantly with premium emoji format
-          listenerBot.sendMessage(chatId, `instant your post is pinned for ${mode.durationHours} hour enjoy then <tg-emoji emoji-id="5845860062232318025">⭐</tg-emoji>`, {
-            reply_to_message_id: msg.message_id,
-            parse_mode: 'HTML'
+          // Send instant reply
+          const replyText = `your post is pinned for ${pinSettings.durationHours} hour enjoy <tg-emoji emoji-id="5845860062232318025">📌</tg-emoji>`;
+          await listenerBot.sendMessage(chatId, replyText, { 
+            parse_mode: 'HTML', 
+            reply_to_message_id: msg.message_id 
           });
 
-          // Set a timeout to automatically unpin after 1 or 2 hours
+          // Schedule unpinning
+          const unpinDelayMs = pinSettings.durationHours * 60 * 60 * 1000;
           setTimeout(() => {
             listenerBot.unpinChatMessage(chatId, { message_id: msg.message_id })
-              .catch(err => console.error("Auto-unpin failed:", err.message));
-          }, mode.durationHours * 60 * 60 * 1000); 
+              .catch(err => console.log("Failed to unpin message (might already be unpinned):", err.message));
+          }, unpinDelayMs);
         }
       } catch (error) {
-        console.error("Error in auto-pin logic:", error.message);
+        console.error("Auto-pin logic failed (check bot permissions):", error.message);
       }
     }
   }
