@@ -188,23 +188,21 @@ listenerBot.on('message', async (msg) => {
       triggerReactions(chatId, msg.message_id); 
     }
 
-    // Auto-Pin Non-Admin Posts
+    // Auto-Pin Non-Admin Posts (Slot System)
     if (groupPinModes.has(chatId) && !text.startsWith('/')) {
       const pinMode = groupPinModes.get(chatId);
 
       try {
         const member = await listenerBot.getChatMember(chatId, msg.from.id);
         
-        // Only pin if user is NOT an admin or creator
-        if (member.status !== 'administrator' && member.status !== 'creator') {
+        // ONLY pin if user is NOT an admin/creator AND the pin slot is open (announcementMsgId is not null)
+        if (member.status !== 'administrator' && member.status !== 'creator' && pinMode.announcementMsgId) {
           
           await listenerBot.pinChatMessage(chatId, msg.message_id);
 
-          // 1. Delete the old "Next post will be pinned..." announcement message
-          if (pinMode.announcementMsgId) {
-            listenerBot.deleteMessage(chatId, pinMode.announcementMsgId).catch(() => {});
-            pinMode.announcementMsgId = null; // Clear it so it only deletes once
-          }
+          // 1. Delete the old announcement to close the slot
+          listenerBot.deleteMessage(chatId, pinMode.announcementMsgId).catch(() => {});
+          pinMode.announcementMsgId = null; // Mark slot as closed so no one else gets pinned
           
           // 2. Send the reply "your post is pinned..."
           const replyMsg = await listenerBot.sendMessage(chatId, `your post is pinned for ${pinMode.type} hour enjoy <tg-emoji emoji-id="5845860062232318025">🔥</tg-emoji>`, {
@@ -212,19 +210,39 @@ listenerBot.on('message', async (msg) => {
             parse_mode: 'HTML'
           });
 
-          // 3. Delete the "your post is pinned..." reply exactly 2 minutes later
+          // 3. Delete the reply exactly 2 minutes later
           setTimeout(() => {
             listenerBot.deleteMessage(chatId, replyMsg.message_id).catch(() => {});
-          }, 120000); // 120,000 milliseconds = 2 minutes
+          }, 120000); 
 
-          // 4. Unpin the actual post automatically after 1 or 2 hours
+          // 4. Unpin automatically after 1 or 2 hours, then re-announce to open the slot again
           const unpinDelayMs = pinMode.type * 60 * 60 * 1000;
-          setTimeout(() => {
-            listenerBot.unpinChatMessage(chatId, msg.message_id).catch(() => {});
+          
+          setTimeout(async () => {
+            await listenerBot.unpinChatMessage(chatId, msg.message_id).catch(() => {});
+            
+            // Check if pin mode is still active in this group
+            if (groupPinModes.has(chatId)) {
+              const currentMode = groupPinModes.get(chatId);
+              
+              // Only send a new announcement if one isn't already there
+              if (!currentMode.announcementMsgId) {
+                const announcementText = currentMode.type === 1 
+                  ? `<tg-emoji emoji-id="5362034620562940839">💎</tg-emoji> Next post will be pinned for an Hour <tg-emoji emoji-id="5274126849151101077">📌</tg-emoji> (except admins <tg-emoji emoji-id="6314110509377398413">👑</tg-emoji>)`
+                  : `<tg-emoji emoji-id="5362034620562940839">💎</tg-emoji> Next post will be pinned for 2 hour then <tg-emoji emoji-id="5274126849151101077">📌</tg-emoji> (except admins <tg-emoji emoji-id="6314110509377398413">👑</tg-emoji>)`;
+                
+                try {
+                  const newAnnouncement = await listenerBot.sendMessage(chatId, announcementText, { parse_mode: 'HTML' });
+                  currentMode.announcementMsgId = newAnnouncement.message_id; // Slot is officially OPEN again
+                } catch (err) {
+                  console.error("Failed to re-send announcement.", err.message);
+                }
+              }
+            }
           }, unpinDelayMs);
         }
       } catch (err) {
-        console.error("Failed to pin/delete message or fetch chat member. Ensure bot is an Admin with delete/pin rights.", err.message);
+        console.error("Failed to pin/delete message or fetch chat member. Ensure bot is an Admin.", err.message);
       }
     }
   }
