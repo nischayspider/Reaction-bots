@@ -29,8 +29,8 @@ let pendingReactMessageId = null;
 
 // --- ADMIN SECURITY ---
 const adminUsernames = ['disturbor', 'madciara'];
-// If usernames keep failing, put your numeric Telegram ID here (e.g., [123456789, 987654321])
-const adminIds = []; 
+// Hardcoded IDs for @disturbor and @madciara (Bulletproof access)
+const adminIds = [6146191046, 206240767]; 
 const groupPinModes = new Map(); // Tracks { type: 1|2, weekTimer, announcementMsgId } per chat
 
 console.log("Kiara Main Listener is online...");
@@ -90,11 +90,12 @@ listenerBot.on('message', async (msg) => {
   const senderUsername = rawUsername.replace('@', '').toLowerCase();
   const senderId = msg.from?.id;
 
+  // Checks both Username OR Numeric ID
   const isAdmin = adminUsernames.includes(senderUsername) || adminIds.includes(senderId);
 
   // Debugging tool: Log all DMs so you can see exactly who the bot thinks you are
   if (chatType === 'private') {
-    console.log(`[DM Received] ID: ${senderId} | Username: ${senderUsername || 'NONE SET'}`);
+    console.log(`[DM Received] ID: ${senderId} | Username: ${senderUsername || 'NONE SET'} | IsAdmin: ${isAdmin}`);
   }
 
   // --- 1. ADMIN COMMANDS (AUTO-REACT SETUP IN PRIVATE CHAT) ---
@@ -206,30 +207,37 @@ listenerBot.on('message', async (msg) => {
       try {
         const member = await listenerBot.getChatMember(chatId, msg.from.id);
         
+        // ONLY pin if user is NOT an admin/creator AND the pin slot is open (announcementMsgId is not null)
         if (member.status !== 'administrator' && member.status !== 'creator' && pinMode.announcementMsgId) {
           
           await listenerBot.pinChatMessage(chatId, msg.message_id);
 
+          // 1. Delete the old announcement to close the slot
           listenerBot.deleteMessage(chatId, pinMode.announcementMsgId).catch(() => {});
           pinMode.announcementMsgId = null; 
           
+          // 2. Send the reply "your post is pinned..."
           const replyMsg = await listenerBot.sendMessage(chatId, `your post is pinned for ${pinMode.type} hour enjoy <tg-emoji emoji-id="5845860062232318025">🔥</tg-emoji>`, {
             reply_to_message_id: msg.message_id,
             parse_mode: 'HTML'
           });
 
+          // 3. Delete the reply exactly 2 minutes later
           setTimeout(() => {
             listenerBot.deleteMessage(chatId, replyMsg.message_id).catch(() => {});
           }, 120000); 
 
+          // 4. Unpin automatically after 1 or 2 hours, then re-announce to open the slot again
           const unpinDelayMs = pinMode.type * 60 * 60 * 1000;
           
           setTimeout(async () => {
             await listenerBot.unpinChatMessage(chatId, msg.message_id).catch(() => {});
             
+            // Check if pin mode is still active in this group
             if (groupPinModes.has(chatId)) {
               const currentMode = groupPinModes.get(chatId);
               
+              // Only send a new announcement if one isn't already there
               if (!currentMode.announcementMsgId) {
                 const announcementText = currentMode.type === 1 
                   ? `<tg-emoji emoji-id="5362034620562940839">💎</tg-emoji> Next post will be pinned for an Hour <tg-emoji emoji-id="5274126849151101077">📌</tg-emoji> (except admins <tg-emoji emoji-id="6314110509377398413">👑</tg-emoji>)`
@@ -237,7 +245,7 @@ listenerBot.on('message', async (msg) => {
                 
                 try {
                   const newAnnouncement = await listenerBot.sendMessage(chatId, announcementText, { parse_mode: 'HTML' });
-                  currentMode.announcementMsgId = newAnnouncement.message_id; 
+                  currentMode.announcementMsgId = newAnnouncement.message_id; // Slot is officially OPEN again
                 } catch (err) {
                   console.error("Failed to re-send announcement.", err.message);
                 }
