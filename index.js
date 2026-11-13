@@ -46,7 +46,8 @@ function getRandomCuteLine() {
 }
 
 // --- STATE MANAGEMENT ---
-let activeGroups = new Set(); 
+let reactionGroups = new Set(); // For 20-bot auto reactions
+let broadcastGroups = new Set(); // For /make and /cute broadcasts
 let currentAction = null; 
 let pendingReactChatId = null;
 let pendingReactMessageId = null;
@@ -82,22 +83,23 @@ listenerBot.on('callback_query', async (query) => {
     return listenerBot.answerCallbackQuery(query.id, { text: "❌ Only admins can click this.", show_alert: true });
   }
 
+  // MASS PURGE EXECUTION
   if (data.startsWith('del_yes_')) {
     const parts = data.split('_');
-    const targetMsgId = parts[2];
-    const commandMsgId = parts[3];
+    const targetMsgId = parseInt(parts[2]);
+    const commandMsgId = parseInt(parts[3]);
     
-    try {
-      await listenerBot.deleteMessage(chatId, targetMsgId); // Delete replied msg
-      if (commandMsgId) await listenerBot.deleteMessage(chatId, commandMsgId); // Delete /ciaradelete msg
-      await listenerBot.deleteMessage(chatId, query.message.message_id); // Delete Yes/No buttons
-      listenerBot.answerCallbackQuery(query.id, { text: "Deleted successfully." });
-    } catch (err) {
-      listenerBot.answerCallbackQuery(query.id, { text: "Error: Could not delete message." });
+    listenerBot.answerCallbackQuery(query.id, { text: "Deleting all messages..." });
+
+    // Loops through and deletes everything from the target message up to the command
+    for (let i = targetMsgId; i <= commandMsgId; i++) {
+      listenerBot.deleteMessage(chatId, i).catch(() => {});
     }
+    listenerBot.deleteMessage(chatId, query.message.message_id).catch(() => {}); // Deletes the yes/no prompt
+
   } else if (data.startsWith('del_no_')) {
     try {
-      await listenerBot.deleteMessage(chatId, query.message.message_id); // Remove buttons
+      await listenerBot.deleteMessage(chatId, query.message.message_id); 
       listenerBot.answerCallbackQuery(query.id, { text: "Cancelled." });
     } catch (err) {}
   }
@@ -151,12 +153,12 @@ listenerBot.on('message', async (msg) => {
   if (chatType === 'private' && isAdmin) {
     if (text === '/cute') {
       if (!isDisturbor) return listenerBot.sendMessage(chatId, "❌ Only @disturbor can use the /cute command.");
-      if (activeGroups.size === 0) return listenerBot.sendMessage(chatId, "No active groups found to broadcast to.");
+      if (broadcastGroups.size === 0) return listenerBot.sendMessage(chatId, "No active groups found to broadcast to.");
       
       const cuteBroadcast = getRandomCuteLine();
       listenerBot.sendMessage(chatId, "Broadcasting Ciara cuteness to all active groups!");
       
-      for (const group of activeGroups) {
+      for (const group of broadcastGroups) {
         try { await listenerBot.sendMessage(`@${group}`, cuteBroadcast, { parse_mode: 'HTML' }); } catch (error) {}
       }
       return;
@@ -180,11 +182,11 @@ listenerBot.on('message', async (msg) => {
       if (!isDisturbor) return; 
       currentAction = null;
       broadcastMessageIds.clear(); 
-      if (activeGroups.size === 0) return listenerBot.sendMessage(chatId, "No active groups. Use /start first.");
+      if (broadcastGroups.size === 0) return listenerBot.sendMessage(chatId, "No active broadcast groups.");
       
       const broadcastText = `<tg-emoji emoji-id="5362034620562940839">💎</tg-emoji> ${text}`;
       listenerBot.sendMessage(chatId, `Deploying broadcast...`);
-      for (const group of activeGroups) {
+      for (const group of broadcastGroups) {
         try {
           const sentMsg = await listenerBot.sendMessage(`@${group}`, broadcastText, { parse_mode: 'HTML' });
           broadcastMessageIds.set(group, sentMsg.message_id); 
@@ -195,16 +197,17 @@ listenerBot.on('message', async (msg) => {
 
     if (text === '/start') {
       currentAction = 'add';
-      return listenerBot.sendMessage(chatId, "Send the group username (e.g., @mygroup) to ADD to auto-react.");
+      return listenerBot.sendMessage(chatId, "Send the group username (e.g., @mygroup) to ADD to auto-react and broadcasts.");
     }
     if (text === '/cancel') {
       currentAction = 'cancel';
-      return listenerBot.sendMessage(chatId, "Send the group username to REMOVE from auto-react.");
+      return listenerBot.sendMessage(chatId, "Send the group username to REMOVE from all systems.");
     }
     if (text === '/check') {
       currentAction = null; 
-      const groupList = Array.from(activeGroups).map(g => `@${g}`).join('\n');
-      return listenerBot.sendMessage(chatId, activeGroups.size > 0 ? `Active in:\n${groupList}` : "Not active anywhere.");
+      const reactList = Array.from(reactionGroups).map(g => `@${g}`).join(', ') || 'None';
+      const broadcastList = Array.from(broadcastGroups).map(g => `@${g}`).join(', ') || 'None';
+      return listenerBot.sendMessage(chatId, `**Status:**\nAuto-Reacting In: ${reactList}\nBroadcasting To: ${broadcastList}`, { parse_mode: 'Markdown' });
     }
     if (text.toLowerCase() === '/react' || text.toLowerCase() === 'react') {
       currentAction = 'react_link';
@@ -212,15 +215,18 @@ listenerBot.on('message', async (msg) => {
     }
 
     if (currentAction && !text.startsWith('/')) {
+      const targetGroup = text.replace('@', '').toLowerCase();
       if (currentAction === 'add') {
-        activeGroups.add(text.replace('@', '').toLowerCase());
+        reactionGroups.add(targetGroup);
+        broadcastGroups.add(targetGroup);
         currentAction = null;
-        return listenerBot.sendMessage(chatId, `✅ Added!`);
+        return listenerBot.sendMessage(chatId, `✅ Added to reactions and broadcasts!`);
       }
       if (currentAction === 'cancel') {
-        activeGroups.delete(text.replace('@', '').toLowerCase());
+        reactionGroups.delete(targetGroup);
+        broadcastGroups.delete(targetGroup);
         currentAction = null;
-        return listenerBot.sendMessage(chatId, `🛑 Canceled.`);
+        return listenerBot.sendMessage(chatId, `🛑 Removed from all systems.`);
       }
       if (currentAction === 'react_link') {
         const match = text.match(/t\.me\/(?:c\/)?([a-zA-Z0-9_]+)\/(\d+)/);
@@ -242,13 +248,26 @@ listenerBot.on('message', async (msg) => {
   // --- 2. GROUP COMMANDS ---
   if (chatType === 'group' || chatType === 'supergroup') {
     
-    // EVERYONE COMMAND
+    // EVERYONE COMMAND: stealth cuteciara
     if (text === '/cuteciara') {
+      listenerBot.deleteMessage(chatId, msg.message_id).catch(() => {}); // Deletes user command silently
       return listenerBot.sendMessage(chatId, getRandomCuteLine(), { parse_mode: 'HTML' });
     }
 
     // ADMIN ONLY GROUP COMMANDS
     if (isAdmin) {
+      
+      // CONNECT GROUP FOR BROADCASTS ONLY
+      if (text === '/contact') {
+        const currentGroupUsername = msg.chat.username?.toLowerCase();
+        if (currentGroupUsername) {
+          broadcastGroups.add(currentGroupUsername);
+          return listenerBot.sendMessage(chatId, "✅ Group connected for Broadcasts! (Auto-reactions remain OFF)");
+        } else {
+          return listenerBot.sendMessage(chatId, "⚠️ This group needs a public username (@...) to be connected.");
+        }
+      }
+
       if (text === '/ciaradelete') {
         if (!msg.reply_to_message) {
           return listenerBot.sendMessage(chatId, "⚠️ Please reply to the message you want to delete with /ciaradelete");
@@ -321,7 +340,8 @@ listenerBot.on('message', async (msg) => {
     // AUTO-REACTION & AUTO-PIN INFINITE LOOP
     const currentGroupUsername = msg.chat.username?.toLowerCase();
     
-    if (currentGroupUsername && activeGroups.has(currentGroupUsername)) {
+    // Auto-react ONLY if it's in the reactionGroups list
+    if (currentGroupUsername && reactionGroups.has(currentGroupUsername)) {
       triggerReactions(chatId, msg.message_id); 
     }
 
