@@ -21,6 +21,30 @@ const listenerBot = new TelegramBot(tokens[0], { polling: true });
 // Custom Default Emojis for Reactions
 const allowedEmojis = ['💋', '⚡', '😭', '😁', '💘', '❤️', '🍓', '❤️‍🔥', '😂'];
 
+// --- CUTE CIARA LINES & EMOJIS ---
+const cuteLines = [
+  "Fun fact: The name Ciara means 'dark-haired' or 'bright and shining' in Irish, and she definitely lights up every room she walks into!",
+  "this Ciara is the kind of person whose smile can instantly turn a bad day into the best day ever",
+  "Warning: Hanging out with Ciara may cause excessive smiling, uncontrollable laughter, and instant happiness",
+  "Everyone needs a Ciara in their life—she has the purest heart and the best energy",
+  "If kindness and cuteness were a person, their name would definitely be Ciara",
+  "Ciara isn't just a pretty name; she's literally everyone's favorite person to be around"
+];
+
+const premiumCuteEmojis = [
+  "5792166502811571030", "5792016234790785290", "5791912352416798142", 
+  "5792101077574751961", "5792000665534337611", "5792133470218097977", 
+  "5794440108174217537", "5791945161671973018", "5791992127139353477", 
+  "5791728935838423081", "5794222529425973097"
+];
+
+function getRandomCuteLine() {
+  const line = cuteLines[Math.floor(Math.random() * cuteLines.length)];
+  const e1 = premiumCuteEmojis[Math.floor(Math.random() * premiumCuteEmojis.length)];
+  const e2 = premiumCuteEmojis[Math.floor(Math.random() * premiumCuteEmojis.length)];
+  return `<tg-emoji emoji-id="${e1}">✨</tg-emoji> ${line} @madciara :) <tg-emoji emoji-id="${e2}">✨</tg-emoji>`;
+}
+
 // --- STATE MANAGEMENT ---
 let activeGroups = new Set(); 
 let currentAction = null; 
@@ -45,7 +69,41 @@ const getAnnouncementText = (type) => {
 
 console.log("Kiara Main Listener is online...");
 
-// --- REACTION SYSTEM (1-Minute Delay) ---
+// --- BUTTON CALLBACKS FOR /ciaradelete ---
+listenerBot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  const data = query.data;
+  
+  const senderUsername = (query.from.username || '').replace('@', '').toLowerCase();
+  const senderId = query.from.id;
+  const isAdmin = adminUsernames.includes(senderUsername) || adminIds.includes(senderId);
+
+  if (!isAdmin) {
+    return listenerBot.answerCallbackQuery(query.id, { text: "❌ Only admins can click this.", show_alert: true });
+  }
+
+  if (data.startsWith('del_yes_')) {
+    const parts = data.split('_');
+    const targetMsgId = parts[2];
+    const commandMsgId = parts[3];
+    
+    try {
+      await listenerBot.deleteMessage(chatId, targetMsgId); // Delete replied msg
+      if (commandMsgId) await listenerBot.deleteMessage(chatId, commandMsgId); // Delete /ciaradelete msg
+      await listenerBot.deleteMessage(chatId, query.message.message_id); // Delete Yes/No buttons
+      listenerBot.answerCallbackQuery(query.id, { text: "Deleted successfully." });
+    } catch (err) {
+      listenerBot.answerCallbackQuery(query.id, { text: "Error: Could not delete message." });
+    }
+  } else if (data.startsWith('del_no_')) {
+    try {
+      await listenerBot.deleteMessage(chatId, query.message.message_id); // Remove buttons
+      listenerBot.answerCallbackQuery(query.id, { text: "Cancelled." });
+    } catch (err) {}
+  }
+});
+
+// --- REACTION SYSTEM ---
 async function triggerReactions(chatId, messageId, specificEmoji = null) {
   for (let i = 0; i < 10; i++) {
     const token = tokens[i];
@@ -70,7 +128,6 @@ async function triggerReactions(chatId, messageId, specificEmoji = null) {
   }
 }
 
-// 1-Week Pin Expiration
 function startWeekTimer(chatId) {
   return setTimeout(() => {
     listenerBot.sendMessage(chatId, "you still wanna use 1 or change it to 2 hour ok");
@@ -92,6 +149,19 @@ listenerBot.on('message', async (msg) => {
 
   // --- 1. ADMIN PRIVATE COMMANDS ---
   if (chatType === 'private' && isAdmin) {
+    if (text === '/cute') {
+      if (!isDisturbor) return listenerBot.sendMessage(chatId, "❌ Only @disturbor can use the /cute command.");
+      if (activeGroups.size === 0) return listenerBot.sendMessage(chatId, "No active groups found to broadcast to.");
+      
+      const cuteBroadcast = getRandomCuteLine();
+      listenerBot.sendMessage(chatId, "Broadcasting Ciara cuteness to all active groups!");
+      
+      for (const group of activeGroups) {
+        try { await listenerBot.sendMessage(`@${group}`, cuteBroadcast, { parse_mode: 'HTML' }); } catch (error) {}
+      }
+      return;
+    }
+
     if (text === '/make') {
       if (!isDisturbor) return listenerBot.sendMessage(chatId, "❌ Only @disturbor can use the /make command.");
       currentAction = 'make_broadcast';
@@ -169,61 +239,86 @@ listenerBot.on('message', async (msg) => {
     }
   }
 
-  // --- 2. ADMIN GROUP COMMANDS (/time, /ciarapin) ---
-  if ((chatType === 'group' || chatType === 'supergroup') && isAdmin) {
-    if (text === '/time') {
-      if (!groupPinModes.has(chatId)) return listenerBot.sendMessage(chatId, "Activate /ciarapin1 or /ciarapin2 first!");
-      groupActionState.set(chatId, 'awaiting_time');
-      return listenerBot.sendMessage(chatId, "How many minutes?");
-    }
-
-    if (groupActionState.get(chatId) === 'awaiting_time' && !text.startsWith('/')) {
-      const mins = parseInt(text.trim());
-      if (isNaN(mins) || mins <= 0) return listenerBot.sendMessage(chatId, "Send a valid number.");
-      groupActionState.delete(chatId);
-      
-      const pinMode = groupPinModes.get(chatId);
-      if (pinMode.refreshTimer) clearInterval(pinMode.refreshTimer);
-      
-      pinMode.refreshTimer = setInterval(async () => {
-        const currentMode = groupPinModes.get(chatId);
-        if (!currentMode || !currentMode.announcementMsgId) return; 
-        
-        listenerBot.deleteMessage(chatId, currentMode.announcementMsgId).catch(() => {});
-        try {
-          const newAnnouncement = await listenerBot.sendMessage(chatId, getAnnouncementText(currentMode.type), { parse_mode: 'HTML' });
-          currentMode.announcementMsgId = newAnnouncement.message_id;
-        } catch (err) {}
-      }, mins * 60 * 1000);
-      
-      return listenerBot.sendMessage(chatId, `✅ Announcement will refresh every ${mins} minute(s)!`);
-    }
-
-    if (text === '/ciarapin1' || text === '/ciarapin2') {
-      if (groupPinModes.has(chatId)) {
-        clearTimeout(groupPinModes.get(chatId).weekTimer);
-        if (groupPinModes.get(chatId).refreshTimer) clearInterval(groupPinModes.get(chatId).refreshTimer);
-      }
-      const type = text === '/ciarapin1' ? 1 : 2;
-      const weekTimer = startWeekTimer(chatId);
-      const announcement = await listenerBot.sendMessage(chatId, getAnnouncementText(type), { parse_mode: 'HTML' });
-      groupPinModes.set(chatId, { type, weekTimer, announcementMsgId: announcement.message_id });
-      return;
-    }
-
-    if (text === '/cancelpin') {
-      if (groupPinModes.has(chatId)) {
-        const pinMode = groupPinModes.get(chatId);
-        clearTimeout(pinMode.weekTimer);
-        if (pinMode.refreshTimer) clearInterval(pinMode.refreshTimer); 
-        groupPinModes.delete(chatId);
-        return listenerBot.sendMessage(chatId, "Pinning mode cancelled.");
-      }
-    }
-  }
-
-  // --- 3. AUTO-REACTION & AUTO-PIN INFINITE LOOP ---
+  // --- 2. GROUP COMMANDS ---
   if (chatType === 'group' || chatType === 'supergroup') {
+    
+    // EVERYONE COMMAND
+    if (text === '/cuteciara') {
+      return listenerBot.sendMessage(chatId, getRandomCuteLine(), { parse_mode: 'HTML' });
+    }
+
+    // ADMIN ONLY GROUP COMMANDS
+    if (isAdmin) {
+      if (text === '/ciaradelete') {
+        if (!msg.reply_to_message) {
+          return listenerBot.sendMessage(chatId, "⚠️ Please reply to the message you want to delete with /ciaradelete");
+        }
+        const targetMsgId = msg.reply_to_message.message_id;
+        return listenerBot.sendMessage(chatId, "Are you sure want to delete the text from replied message?", {
+          reply_to_message_id: msg.message_id,
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '🔵 Yes', callback_data: `del_yes_${targetMsgId}_${msg.message_id}` },
+                { text: '🔴 No', callback_data: `del_no_` }
+              ]
+            ]
+          }
+        });
+      }
+
+      if (text === '/time') {
+        if (!groupPinModes.has(chatId)) return listenerBot.sendMessage(chatId, "Activate /ciarapin1 or /ciarapin2 first!");
+        groupActionState.set(chatId, 'awaiting_time');
+        return listenerBot.sendMessage(chatId, "How many minutes?");
+      }
+
+      if (groupActionState.get(chatId) === 'awaiting_time' && !text.startsWith('/')) {
+        const mins = parseInt(text.trim());
+        if (isNaN(mins) || mins <= 0) return listenerBot.sendMessage(chatId, "Send a valid number.");
+        groupActionState.delete(chatId);
+        
+        const pinMode = groupPinModes.get(chatId);
+        if (pinMode.refreshTimer) clearInterval(pinMode.refreshTimer);
+        
+        pinMode.refreshTimer = setInterval(async () => {
+          const currentMode = groupPinModes.get(chatId);
+          if (!currentMode || !currentMode.announcementMsgId) return; 
+          
+          listenerBot.deleteMessage(chatId, currentMode.announcementMsgId).catch(() => {});
+          try {
+            const newAnnouncement = await listenerBot.sendMessage(chatId, getAnnouncementText(currentMode.type), { parse_mode: 'HTML' });
+            currentMode.announcementMsgId = newAnnouncement.message_id;
+          } catch (err) {}
+        }, mins * 60 * 1000);
+        
+        return listenerBot.sendMessage(chatId, `✅ Announcement will refresh every ${mins} minute(s)!`);
+      }
+
+      if (text === '/ciarapin1' || text === '/ciarapin2') {
+        if (groupPinModes.has(chatId)) {
+          clearTimeout(groupPinModes.get(chatId).weekTimer);
+          if (groupPinModes.get(chatId).refreshTimer) clearInterval(groupPinModes.get(chatId).refreshTimer);
+        }
+        const type = text === '/ciarapin1' ? 1 : 2;
+        const weekTimer = startWeekTimer(chatId);
+        const announcement = await listenerBot.sendMessage(chatId, getAnnouncementText(type), { parse_mode: 'HTML' });
+        groupPinModes.set(chatId, { type, weekTimer, announcementMsgId: announcement.message_id });
+        return;
+      }
+
+      if (text === '/cancelpin') {
+        if (groupPinModes.has(chatId)) {
+          const pinMode = groupPinModes.get(chatId);
+          clearTimeout(pinMode.weekTimer);
+          if (pinMode.refreshTimer) clearInterval(pinMode.refreshTimer); 
+          groupPinModes.delete(chatId);
+          return listenerBot.sendMessage(chatId, "Pinning mode cancelled.");
+        }
+      }
+    }
+
+    // AUTO-REACTION & AUTO-PIN INFINITE LOOP
     const currentGroupUsername = msg.chat.username?.toLowerCase();
     
     if (currentGroupUsername && activeGroups.has(currentGroupUsername)) {
@@ -257,7 +352,7 @@ listenerBot.on('message', async (msg) => {
               if (!currentMode.announcementMsgId) {
                 try {
                   const newAnnouncement = await listenerBot.sendMessage(chatId, getAnnouncementText(currentMode.type), { parse_mode: 'HTML' });
-                  currentMode.announcementMsgId = newAnnouncement.message_id; // Restarts the loop / unpauses /time
+                  currentMode.announcementMsgId = newAnnouncement.message_id; // Restarts the loop
                 } catch (err) {}
               }
             }
