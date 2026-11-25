@@ -187,4 +187,3 @@ listenerBot.on('message', async (msg) => {
     "node-telegram-bot-api": "^0.64.0"
   }
 }
- I will tell you now what to do in this
