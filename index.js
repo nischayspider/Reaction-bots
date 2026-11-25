@@ -31,14 +31,24 @@ const adminUsername = 'disturbor';
 
 console.log("Kiara Main Listener is online...");
 
-// Reaction Logic with Custom Emoji Support & 1-Minute Delay
-async function triggerReactions(chatId, messageId, specificEmoji = null) {
+// Helper to extract one or multiple emojis from user input
+function extractEmojis(text) {
+  const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+  return Array.from(segmenter.segment(text))
+    .map(s => s.segment.trim())
+    .filter(s => /\p{Extended_Pictographic}/u.test(s));
+}
+
+// Reaction Logic with Single/Mix Custom Emoji Support & 1-Minute Delay
+async function triggerReactions(chatId, messageId, customEmojis = null) {
+  const emojiPool = (customEmojis && customEmojis.length > 0) ? customEmojis : allowedEmojis;
+
   // 1. First 10 Bots React (Bots 1-10)
   for (let i = 0; i < 10; i++) {
     const token = tokens[i];
     if (!token) continue; // Safely skips if the token slot is empty
 
-    const emojiToUse = specificEmoji || allowedEmojis[Math.floor(Math.random() * allowedEmojis.length)];
+    const emojiToUse = emojiPool[Math.floor(Math.random() * emojiPool.length)];
     const url = `https://api.telegram.org/bot${token}/setMessageReaction`;
 
     try {
@@ -58,7 +68,7 @@ async function triggerReactions(chatId, messageId, specificEmoji = null) {
     const token = tokens[i];
     if (!token) continue;
 
-    const emojiToUse = specificEmoji || allowedEmojis[Math.floor(Math.random() * allowedEmojis.length)];
+    const emojiToUse = emojiPool[Math.floor(Math.random() * emojiPool.length)];
     const url = `https://api.telegram.org/bot${token}/setMessageReaction`;
 
     try {
@@ -141,22 +151,27 @@ listenerBot.on('message', async (msg) => {
           pendingReactMessageId = targetMessageId;
           currentAction = 'react_emoji'; 
 
-          return listenerBot.sendMessage(chatId, "Link saved! Now send me the ONE specific emoji you want all bots to use (e.g., ❤️ or 😂).\n\nOr type 'random' to use the default mixed emojis.");
+          return listenerBot.sendMessage(chatId, "Link saved! Now send one or multiple emojis you want the bots to mix (e.g., 🤣 😭 🤝).\n\nOr type 'random' to use the default mixed emojis.");
         } else {
           return listenerBot.sendMessage(chatId, "Invalid link format. Try again with /react.");
         }
       }
 
-      // STEP 2 of /react: Process the custom emoji and trigger
+      // STEP 2 of /react: Process the custom emoji(s) and trigger
       if (currentAction === 'react_emoji') {
-        currentAction = null;
-        let chosenEmoji = text.trim();
-        if (chosenEmoji.toLowerCase() === 'random') {
-          chosenEmoji = null; // Uses the random array
+        const input = text.trim();
+        let chosenEmojis = null;
+
+        if (input.toLowerCase() !== 'random') {
+          chosenEmojis = extractEmojis(input);
+          if (chosenEmojis.length === 0) {
+            return listenerBot.sendMessage(chatId, "No valid emojis detected. Send at least one emoji (e.g., 🤣 😭 🤝) or type 'random'.");
+          }
         }
 
+        currentAction = null;
         listenerBot.sendMessage(chatId, `Command accepted! Kiara is deploying staggered reactions...`);
-        triggerReactions(pendingReactChatId, pendingReactMessageId, chosenEmoji)
+        triggerReactions(pendingReactChatId, pendingReactMessageId, chosenEmojis)
           .then(() => listenerBot.sendMessage(chatId, "✅ All staggered reactions finished!"))
           .catch(() => listenerBot.sendMessage(chatId, "⚠️ Finished, but check Render logs for any failures."));
         return;
