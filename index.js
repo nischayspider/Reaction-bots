@@ -8,12 +8,13 @@ const app = express();
 app.get('/', (req, res) => res.send('Kiara Agent is running 24/7!'));
 app.listen(process.env.PORT || 3000, () => console.log('Kiara Web server is awake.'));
 
-// Array of all 20 tokens
+// Array of all tokens (including the new merged API token)
 const tokens = [
   process.env.LISTENER_BOT_TOKEN, process.env.TOKEN_2, process.env.TOKEN_3, process.env.TOKEN_4, process.env.TOKEN_5, 
   process.env.TOKEN_6, process.env.TOKEN_7, process.env.TOKEN_8, process.env.TOKEN_9, process.env.TOKEN_10,
   process.env.TOKEN_11, process.env.TOKEN_12, process.env.TOKEN_13, process.env.TOKEN_14, process.env.TOKEN_15,
-  process.env.TOKEN_16, process.env.TOKEN_17, process.env.TOKEN_18, process.env.TOKEN_19, process.env.TOKEN_20
+  process.env.TOKEN_16, process.env.TOKEN_17, process.env.TOKEN_18, process.env.TOKEN_19, process.env.TOKEN_20,
+  '8373717897:AAFjxavIKCoo7fzX4kq7Xlj-mU6L8lgngSk'
 ];
 
 const listenerBot = new TelegramBot(tokens[0], { polling: true });
@@ -52,8 +53,8 @@ async function triggerReactions(chatId, messageId, specificEmoji = null) {
   console.log("First 10 done. Waiting 1 minute before next batch...");
   await new Promise(resolve => setTimeout(resolve, 60000));
 
-  // 3. Last 10 Bots React (Bots 11-20)
-  for (let i = 10; i < 20; i++) {
+  // 3. Remaining Bots React (Bots 11+)
+  for (let i = 10; i < tokens.length; i++) {
     const token = tokens[i];
     if (!token) continue;
 
@@ -172,18 +173,3 @@ listenerBot.on('message', async (msg) => {
     }
   }
 });
-And this is my package.json code {
-  "name": "kiara-agent",
-  "version": "2.0.0",
-  "description": "20 bot telegram auto-reaction system managed by Kiara",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "axios": "^1.6.0",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "node-telegram-bot-api": "^0.64.0"
-  }
-}
